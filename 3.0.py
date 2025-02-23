@@ -114,17 +114,19 @@ def line_webhook():
                     reply_to_user(reply_token, "กรุณากรอกรหัสนักศึกษา 8 หลัก เพื่อเปลี่ยนชื่อผู้ใช้")
                     return jsonify({"message": "Waiting for new displayName"}), 200
 
-                if user_id in user_sessions and user_sessions[user_id] == "waiting_for_student_id":
-                    if user_message.isnumeric() and len(user_message) == 8:
-                        del user_sessions[user_id]  # ลบสถานะผู้ใช้หลังจากได้รับรหัสนักศึกษา
+                if user_sessions.get(user_id) == "waiting_for_student_id":
+                    if user_message.isnumeric() and len(user_message) == 8 and int(user_message[:2]) <= 68:
+                        del user_sessions[user_id]  # ลบสถานะผู้ใช้หลังจากได้รับรหัสที่ถูกต้อง
                         return validate_student_id(user_message, year_suffix, user_id, reply_token)
                     else:
                         reply_to_user(reply_token, 
-                                    f"รหัสนักศึกษาของคุณไม่ถูกต้อง\n"
-                                    f"รหัสนักศึกษาต้องเป็นตัวเลข 8 หลัก\n"
-                                    f"ตัวอย่างที่ถูกต้อง: {year_suffix}12345, {year_suffix}56789\n"
-                                    f"โดย 2 หลักแรกต้องไม่เกิน {year_suffix} (ปีปัจจุบัน)")
-
+                            f"รหัสนักศึกษาของคุณไม่ถูกต้อง\n"
+                            f"รหัสนักศึกษาต้องเป็นตัวเลข 8 หลัก\n"
+                            f"ตัวอย่างที่ถูกต้อง: {year_suffix}12345, {year_suffix}56789\n"
+                            f"โดย 2 หลักแรกต้องไม่เกิน {year_suffix}\n"
+                            f"\nกรุณาลองใหม่อีกครั้ง!")
+                        
+                        # **ไม่ลบ user_sessions[user_id] เพื่อให้ยังอยู่ในโหมดรอรหัส**
                         return jsonify({"message": "Invalid student ID"}), 400
                     
             # ตรวจจับอีเวนต์จาก Beacon
