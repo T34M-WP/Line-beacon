@@ -76,9 +76,12 @@ def validate_student_id(user_message, year_suffix, user_id, reply_token):
         if student_prefix <= year_suffix:
             existing_user = UserProfile.query.filter_by(userId=user_id).first()
             if existing_user:
-                existing_user.displayName = user_message  # อัปเดต displayName ของ UserProfile
-                db.session.commit()
-                reply_to_user(reply_token, f"อัปเดตชื่อเป็นรหัสนักศึกษา {user_message} สำเร็จ!")
+                if existing_user.displayName != user_message:  # เช็คว่า displayName ไม่ตรงกับ student_id เดิม
+                    existing_user.displayName = user_message  # อัปเดต displayName ของ UserProfile
+                    db.session.commit()
+                    reply_to_user(reply_token, f"อัปเดตชื่อเป็นรหัสนักศึกษา {user_message} สำเร็จ!")
+                else:
+                    reply_to_user(reply_token, "รหัสนักศึกษาของคุณตรงกับข้อมูลในระบบแล้ว ไม่มีการบันทึกใหม่!")
             else:
                 reply_to_user(reply_token, "ไม่พบข้อมูลของคุณในระบบ กรุณาเชื่อมต่อ Beacon ก่อนแล้วลองใหม่อีกครั้ง")
         else:
@@ -87,8 +90,6 @@ def validate_student_id(user_message, year_suffix, user_id, reply_token):
         reply_to_user(reply_token, "กรุณากรอกรหัสนักศึกษาที่ถูกต้อง (ต้องเป็นตัวเลข 8 หลักเท่านั้น)")
 
     return jsonify({"message": "DisplayName update attempt"}), 200
-
-
 
 # Webhook รับข้อมูลจาก LINE
 @app.route('/line-webhook', methods=['POST'])
@@ -130,7 +131,7 @@ def line_webhook():
                         
                         # **ไม่ลบ user_sessions[user_id] เพื่อให้ยังอยู่ในโหมดรอรหัส**
                         return jsonify({"message": "Invalid student ID"}), 400
-                    
+
             # ตรวจจับอีเวนต์จาก Beacon
             elif event_type == 'beacon':
                 hwId = event['beacon'].get('hwid')
@@ -153,43 +154,64 @@ def line_webhook():
                 profile = get_line_user_profile(userId)
                 displayName = profile.get("displayName", "Unknown User") if profile else "Unknown User"
 
-                pattern = r"(\d{8})"# หาเลข 8 หลักที่เป็นคำสมบูรณ์
-                match = re.search(pattern, displayName)
 
                 def save_beacon_event(hwId, userId, event_time, test):
                     existing_user = UserProfile.query.filter_by(userId=userId).first()
                     if not existing_user:
-                        
                         new_user = UserProfile(userId=userId, displayName=test)
                         db.session.add(new_user)
                         db.session.commit()
+                    else:
+                        existing_user.displayName = test
                     
                     # บันทึก BeaconEvent
                     new_event = BeaconEvent(hwId=hwId, userId=userId, timestamp=event_time)
                     db.session.add(new_event)
                     db.session.commit()
-                
+
+                existing_user = UserProfile.query.filter_by(userId=userId).first()
+                pattern = r"(\d{8})"# หาเลข 8 หลักที่เป็นคำสมบูรณ์
+                match = re.search(pattern, displayName)
+
                 if match:
                     student_id = match.group()  # ดึงเลข 8 หลักจากข้อความ
                     student_prefix = int(student_id[:2])
 
                     if student_prefix <= year_suffix:
-
                         reply_to_user(reply_token, f"✅ เช็คชื่อเข้าเรียนสำเร็จ! 👤 คุณ {student_id}")
+                        print(f"student_prefix <= year_suffix")
+                    
                         save_beacon_event(hwId, userId, event_time, student_id)
-                        
-
                     else:
+                        if existing_user and existing_user.displayName.isdigit() and len(existing_user.displayName) == 8:
+                            reply_to_user(reply_token, 
+                                    f"✅ เช็คชื่อเข้าเรียนสำเร็จ! 👤 คุณ {existing_user.displayName}")
+                        else:
+                            reply_to_user(reply_token, 
+                                        f"✅ เช็คชื่อเข้าเรียนสำเร็จ! 👤 คุณ {displayName}\n"
+                                        f"⚠️ รหัสนักศึกษาของคุณไม่ถูกต้อง กรุณากรอกรหัสที่ขึ้นต้นด้วยตัวเลขไม่เกิน {year_suffix}")
+                        if existing_user :
+                            new_event = BeaconEvent(hwId=hwId, userId=userId, timestamp=event_time)
+                            db.session.add(new_event)
+                            db.session.commit()
+                        else:
+                            save_beacon_event(hwId, userId, event_time, student_id)
+                        
+                else:
+                    # ตรวจสอบว่า displayName ในฐานข้อมูลคือ student_id หรือไม่
+                    if existing_user and existing_user.displayName.isdigit() and len(existing_user.displayName) == 8:
+                        # ถ้า displayName เป็นรหัสนักศึกษา 8 หลักแล้ว จะไม่ส่งข้อความขอรหัส
+                        print(f"User {userId} has student ID as displayName")
+                        save_beacon_event(hwId, userId, event_time, existing_user.displayName)
+                        reply_to_user(reply_token, 
+                                    f"✅ เช็คชื่อเข้าเรียนสำเร็จ! 👤 คุณ {existing_user.displayName}")
+                    else:
+                        save_beacon_event(hwId, userId, event_time, displayName)
                         reply_to_user(reply_token, 
                                     f"✅ เช็คชื่อเข้าเรียนสำเร็จ! 👤 คุณ {displayName}\n"
-                                    f"⚠️ รหัสนักศึกษาของคุณไม่ถูกต้อง กรุณากรอกรหัสที่ขึ้นต้นด้วยตัวเลขไม่เกิน {year_suffix}")
+                                    f"⚠️ กรุณากรอกรหัสนักศึกษา 8 หลัก เพื่ออัปเดตข้อมูลของคุณ")
 
-                else:
 
-                    save_beacon_event(hwId, userId, event_time, displayName)
-                    reply_to_user(reply_token, 
-                                f"✅ เช็คชื่อเข้าเรียนสำเร็จ! 👤 คุณ {displayName}\n"
-                                f"⚠️ กรุณากรอกรหัสนักศึกษา 8 หลัก เพื่ออัปเดตข้อมูลของคุณ")
               
         return jsonify({"message": "Event processed"}), 200
 
