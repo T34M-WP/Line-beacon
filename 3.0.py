@@ -88,6 +88,8 @@ def validate_student_id(user_message, year_suffix, user_id, reply_token):
 
     return jsonify({"message": "DisplayName update attempt"}), 200
 
+
+
 # Webhook รับข้อมูลจาก LINE
 @app.route('/line-webhook', methods=['POST'])
 def line_webhook():
@@ -151,53 +153,31 @@ def line_webhook():
                 profile = get_line_user_profile(userId)
                 displayName = profile.get("displayName", "Unknown User") if profile else "Unknown User"
 
-                pattern = r"(\d{8})"  # หาเลข 8 หลักที่เป็นคำสมบูรณ์
+                pattern = r"(\d{8})"# หาเลข 8 หลักที่เป็นคำสมบูรณ์
                 match = re.search(pattern, displayName)
 
+                def save_beacon_event(hwId, userId, event_time, test):
+                    existing_user = UserProfile.query.filter_by(userId=userId).first()
+                    if not existing_user:
+                        
+                        new_user = UserProfile(userId=userId, displayName=test)
+                        db.session.add(new_user)
+                        db.session.commit()
+                    
+                    # บันทึก BeaconEvent
+                    new_event = BeaconEvent(hwId=hwId, userId=userId, timestamp=event_time)
+                    db.session.add(new_event)
+                    db.session.commit()
+                
                 if match:
                     student_id = match.group()  # ดึงเลข 8 หลักจากข้อความ
                     student_prefix = int(student_id[:2])
 
                     if student_prefix <= year_suffix:
-                        # ฟังก์ชันตรวจสอบและเพิ่มข้อมูลใน UserProfile
-                        def add_or_update_user_profile(user_id, student_id):
-                            user_profile = UserProfile.query.filter_by(userId=user_id).first()
 
-                            if user_profile:
-                                if user_profile.displayName == student_id:
-                                    print(f"ผู้ใช้ {user_id} มีรหัสนักศึกษา {student_id} อยู่แล้ว ไม่ต้องอัปเดต")
-                                    return None  # ไม่ต้องอัปเดตข้อมูล
-                                else:
-                                    user_profile.displayName = student_id
-                                    try:
-                                        db.session.commit()
-                                        print(f"อัปเดตข้อมูลผู้ใช้ {user_id} ให้มีรหัสนักศึกษา {student_id}")
-                                        return False  # False = อัปเดตข้อมูล
-                                    except Exception as e:
-                                        db.session.rollback()  # ยกเลิกการคอมมิตในกรณีที่เกิดข้อผิดพลาด
-                                        print(f"เกิดข้อผิดพลาดในการอัปเดต: {e}")
-                                        return None  # ไม่ทำการอัปเดต
-                            else:
-                                # ถ้ายังไม่มี ให้เพิ่มข้อมูลใหม่
-                                user_profile = UserProfile(userId=user_id, displayName=student_id)
-                                db.session.add(user_profile)
-                                try:
-                                    db.session.commit()
-                                    print(f"เพิ่มข้อมูลผู้ใช้ {user_id} ลงฐานข้อมูลสำเร็จ")
-                                    return True  # True = ผู้ใช้ใหม่
-                                except Exception as e:
-                                    db.session.rollback()
-                                    print(f"เกิดข้อผิดพลาดในการเพิ่มข้อมูล: {e}")
-                                    return None  # ไม่ทำการเพิ่มข้อมูล
-
-                        is_new_user = add_or_update_user_profile(userId, student_id)
-
-                        if is_new_user is None:
-                            reply_to_user(reply_token, f"✅ เช็คชื่อเข้าเรียนสำเร็จ! 👤 คุณ {student_id}")
-                        elif is_new_user:
-                            reply_to_user(reply_token, f"✅ เช็คชื่อเข้าเรียนสำเร็จ!\n🎉 ยินดีต้อนรับคุณ {student_id} เข้าสู่ระบบ 📌")
-                        else:
-                            reply_to_user(reply_token, f"✅ เช็คชื่อเข้าเรียนสำเร็จ!\n🎉 ข้อมูลของคุณถูกเปลี่ยนเป็น {student_id} แล้ว 📌")
+                        reply_to_user(reply_token, f"✅ เช็คชื่อเข้าเรียนสำเร็จ! 👤 คุณ {student_id}")
+                        save_beacon_event(hwId, userId, event_time, student_id)
+                        
 
                     else:
                         reply_to_user(reply_token, 
@@ -205,20 +185,12 @@ def line_webhook():
                                     f"⚠️ รหัสนักศึกษาของคุณไม่ถูกต้อง กรุณากรอกรหัสที่ขึ้นต้นด้วยตัวเลขไม่เกิน {year_suffix}")
 
                 else:
+
+                    save_beacon_event(hwId, userId, event_time, displayName)
                     reply_to_user(reply_token, 
                                 f"✅ เช็คชื่อเข้าเรียนสำเร็จ! 👤 คุณ {displayName}\n"
                                 f"⚠️ กรุณากรอกรหัสนักศึกษา 8 หลัก เพื่ออัปเดตข้อมูลของคุณ")
-
-                # บันทึก BeaconEvent เฉพาะเมื่อไม่ใช่เหตุการณ์ซ้ำ
-                try:
-                    new_event = BeaconEvent(hwId=hwId, userId=userId, timestamp=event_time)
-                    db.session.add(new_event)
-                    db.session.commit()
-                except Exception as e:
-                    db.session.rollback()
-                    print(f"เกิดข้อผิดพลาดในการบันทึก BeaconEvent: {e}")
-
-
+              
         return jsonify({"message": "Event processed"}), 200
 
     except Exception as e:
