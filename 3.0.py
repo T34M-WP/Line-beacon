@@ -125,7 +125,8 @@ def line_webhook():
                             f"ตัวอย่างที่ถูกต้อง: {year_suffix}12345, {year_suffix}56789\n"
                             f"โดย 2 หลักแรกต้องไม่เกิน {year_suffix}\n"
                             f"\nกรุณาลองใหม่อีกครั้ง!")
-
+                        
+                        # **ไม่ลบ user_sessions[user_id] เพื่อให้ยังอยู่ในโหมดรอรหัส**
                         return jsonify({"message": "Invalid student ID"}), 400
                     
             # ตรวจจับอีเวนต์จาก Beacon
@@ -150,9 +151,9 @@ def line_webhook():
                 profile = get_line_user_profile(userId)
                 displayName = profile.get("displayName", "Unknown User") if profile else "Unknown User"
 
-                pattern = r"(\d{8})"# หาเลข 8 หลักที่เป็นคำสมบูรณ์
+                pattern = r"(\d{8})"  # หาเลข 8 หลักที่เป็นคำสมบูรณ์
                 match = re.search(pattern, displayName)
-                
+
                 if match:
                     student_id = match.group()  # ดึงเลข 8 หลักจากข้อความ
                     student_prefix = int(student_id[:2])
@@ -168,16 +169,26 @@ def line_webhook():
                                     return None  # ไม่ต้องอัปเดตข้อมูล
                                 else:
                                     user_profile.displayName = student_id
-                                    db.session.commit()
-                                    print(f"อัปเดตข้อมูลผู้ใช้ {user_id} ให้มีรหัสนักศึกษา {student_id}")
-                                    return False  # False = อัปเดตข้อมูล
+                                    try:
+                                        db.session.commit()
+                                        print(f"อัปเดตข้อมูลผู้ใช้ {user_id} ให้มีรหัสนักศึกษา {student_id}")
+                                        return False  # False = อัปเดตข้อมูล
+                                    except Exception as e:
+                                        db.session.rollback()  # ยกเลิกการคอมมิตในกรณีที่เกิดข้อผิดพลาด
+                                        print(f"เกิดข้อผิดพลาดในการอัปเดต: {e}")
+                                        return None  # ไม่ทำการอัปเดต
                             else:
                                 # ถ้ายังไม่มี ให้เพิ่มข้อมูลใหม่
                                 user_profile = UserProfile(userId=user_id, displayName=student_id)
                                 db.session.add(user_profile)
-                                db.session.commit()
-                                print(f"เพิ่มข้อมูลผู้ใช้ {user_id} ลงฐานข้อมูลสำเร็จ")
-                                return True  # True = ผู้ใช้ใหม่
+                                try:
+                                    db.session.commit()
+                                    print(f"เพิ่มข้อมูลผู้ใช้ {user_id} ลงฐานข้อมูลสำเร็จ")
+                                    return True  # True = ผู้ใช้ใหม่
+                                except Exception as e:
+                                    db.session.rollback()
+                                    print(f"เกิดข้อผิดพลาดในการเพิ่มข้อมูล: {e}")
+                                    return None  # ไม่ทำการเพิ่มข้อมูล
 
                         is_new_user = add_or_update_user_profile(userId, student_id)
 
@@ -199,9 +210,13 @@ def line_webhook():
                                 f"⚠️ กรุณากรอกรหัสนักศึกษา 8 หลัก เพื่ออัปเดตข้อมูลของคุณ")
 
                 # บันทึก BeaconEvent เฉพาะเมื่อไม่ใช่เหตุการณ์ซ้ำ
-                new_event = BeaconEvent(hwId=hwId, userId=userId, timestamp=event_time)
-                db.session.add(new_event)
-                db.session.commit()
+                try:
+                    new_event = BeaconEvent(hwId=hwId, userId=userId, timestamp=event_time)
+                    db.session.add(new_event)
+                    db.session.commit()
+                except Exception as e:
+                    db.session.rollback()
+                    print(f"เกิดข้อผิดพลาดในการบันทึก BeaconEvent: {e}")
 
 
         return jsonify({"message": "Event processed"}), 200
