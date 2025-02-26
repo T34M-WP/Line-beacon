@@ -31,13 +31,13 @@ class UserProfile(db.Model):
 
 # โมเดลฐานข้อมูล BeaconEvent
 class BeaconEvent(db.Model):
-    __tablename__ = 'beacon_event'
+    __tablename__ = 'beacon_log'
     id = db.Column(db.Integer, primary_key=True)
     hwid = db.Column(db.String(50), nullable=False)
     userid = db.Column(db.String(50), db.ForeignKey('user_profile.userid'), nullable=False)  # เชื่อมโยงกับ UserProfile
     timestamp = db.Column(db.TIMESTAMP(timezone=True), nullable=False, default=datetime.utcnow)
 
-    user_profile = db.relationship('UserProfile', backref='beacon_events')  # เชื่อมโยงกับ UserProfile ผ่าน userid
+    user_profile = db.relationship('UserProfile', backref='beacon_logs')  # เชื่อมโยงกับ UserProfile ผ่าน userid
 
     def __repr__(self):
         return f'<BeaconEvent {self.id}>'
@@ -178,18 +178,18 @@ def line_webhook():
                     student_prefix = int(student_id[:2])
 
                     if student_prefix <= year_suffix:
-                        reply_to_user(reply_token, f"✅ เช็คชื่อเข้าเรียนสำเร็จ! 👤 คุณ {student_id}")
+                        reply_to_user(reply_token, f"เช็คชื่อเข้าเรียนสำเร็จ! คุณ {student_id}")
                         print(f"student_prefix <= year_suffix")
                     
                         save_beacon_event(hwid, userid, event_time, student_id)
                     else:
                         if existing_user and existing_user.displayname.isdigit() and len(existing_user.displayname) == 8:
                             reply_to_user(reply_token, 
-                                    f"✅ เช็คชื่อเข้าเรียนสำเร็จ! 👤 คุณ {existing_user.displayname}")
+                                    f"เช็คชื่อเข้าเรียนสำเร็จ! คุณ {existing_user.displayname}")
                         else:
                             reply_to_user(reply_token, 
-                                        f"✅ เช็คชื่อเข้าเรียนสำเร็จ! 👤 คุณ {displayname}\n"
-                                        f"⚠️ รหัสนักศึกษาของคุณไม่ถูกต้อง กรุณากรอกรหัสที่ขึ้นต้นด้วยตัวเลขไม่เกิน {year_suffix}")
+                                        f"เช็คชื่อเข้าเรียนสำเร็จ! คุณ {displayname}\n"
+                                        f"รหัสนักศึกษาของคุณไม่ถูกต้อง กรุณากรอกรหัสที่ขึ้นต้นด้วยตัวเลขไม่เกิน {year_suffix}")
                         if existing_user :
                             new_event = BeaconEvent(hwid=hwid, userid=userid, timestamp=event_time)
                             db.session.add(new_event)
@@ -204,12 +204,12 @@ def line_webhook():
                         print(f"User {userid} has student ID as displayname")
                         save_beacon_event(hwid, userid, event_time, existing_user.displayname)
                         reply_to_user(reply_token, 
-                                    f"✅ เช็คชื่อเข้าเรียนสำเร็จ! 👤 คุณ {existing_user.displayname}")
+                                    f"เช็คชื่อเข้าเรียนสำเร็จ! คุณ {existing_user.displayname}")
                     else:
                         save_beacon_event(hwid, userid, event_time, displayname)
                         reply_to_user(reply_token, 
-                                    f"✅ เช็คชื่อเข้าเรียนสำเร็จ! 👤 คุณ {displayname}\n"
-                                    f"⚠️ กรุณากรอกรหัสนักศึกษา 8 หลัก เพื่ออัปเดตข้อมูลของคุณ")
+                                    f"เช็คชื่อเข้าเรียนสำเร็จ! คุณ {displayname}\n"
+                                    f"กรุณากรอกรหัสนักศึกษา 8 หลัก เพื่ออัปเดตข้อมูลของคุณ")
 
 
               
