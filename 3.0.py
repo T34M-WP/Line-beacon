@@ -69,6 +69,7 @@ def update_user_profile_from_api(user_id, new_displayname):
     # except requests.exceptions.RequestException as e:
     #     print(f"Error updating user profile: {e}")
         # return None
+    return response
     
 def get_last_beacon_event(hwid, userid):
     url = f"{BASE_URL}/beacon-log/findLastedTimeStampByUserIdAndHWid/{userid}/{hwid}"  # URL สำหรับดึง Beacon Event ล่าสุด
@@ -85,7 +86,7 @@ def get_last_beacon_event(hwid, userid):
         #     print("Received empty response, returning None.")
         #     return None
         
-        # return data  # คืนค่าผลลัพธ์เป็น JSON
+        return data  # คืนค่าผลลัพธ์เป็น JSON
     
     except requests.exceptions.RequestException as e:
         print(f"Error fetching beacon event: {e}")
@@ -114,6 +115,24 @@ def post_beacon_event(hwid, userid, event_time, student_id):
     except requests.exceptions.RequestException as e:
         print(f"Error saving beacon event: {e}")
         return None
+    
+def post_beacon_log(hwid, userid, event_time):
+    url = f"{BASE_URL}/beacon-log/addBeaconLog"  # เปลี่ยนเป็น URL สำหรับบันทึก Beacon Event
+    headers = {"Authorization": f"Bearer {API_ACCESS_TOKEN}"}
+    data = {
+        "hwId": hwid,
+        "userId": userid,
+        "timestamp": event_time.isoformat()
+    }
+
+    try:
+        response = requests.post(url, json=data, headers=headers)
+        response.raise_for_status()
+        print(f"Beacon event saved successfully for {userid}")
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error saving beacon event: {e}")
+        return None
 
 # ฟังก์ชันตรวจสอบรหัสนักศึกษาและเรียก API
 def validate_student_id(user_message, year_suffix, user_id, reply_token):
@@ -124,8 +143,9 @@ def validate_student_id(user_message, year_suffix, user_id, reply_token):
             # ดึงข้อมูลโปรไฟล์จาก API แทนการ query ข้อมูลในฐานข้อมูล
             user_profile = get_user_profile_from_api(user_id)
             if user_profile:
-                displayname = user_profile.displayname
+                displayname = user_profile.get("displayname")
                 if displayname != user_message:  # เช็คว่า displayname ไม่ตรงกับ student_id เดิม
+                    print(f"Updating displayname to student ID: {user_message}")
                     updated_profile = update_user_profile_from_api(user_id, user_message)
                     if updated_profile:
                         reply_to_user(reply_token, f"อัปเดตชื่อเป็นรหัสนักศึกษา {user_message} สำเร็จ!")
@@ -148,6 +168,7 @@ def save_beacon_event(hwid, userid, event_time, student_id):
     print(f"Existing user: {existing_user}")
     
     if not existing_user:
+        print(f"User {userid} not found, creating new user...")
         # หากไม่พบผู้ใช้ ให้สร้างผู้ใช้ใหม่ผ่าน API
         headers = {"Authorization": f"Bearer {API_ACCESS_TOKEN}"}
         url = f"{BASE_URL}/beacon-log/addBeaconEvent"
@@ -170,6 +191,8 @@ def save_beacon_event(hwid, userid, event_time, student_id):
             print(f"Failed to create user: {e}")
             return None  # หรือจะส่งคืนค่าอื่น ๆ ตามต้องการ
     else:
+        print(f"User {userid} found, updating displayname...")
+        post_beacon_log(hwid, userid, event_time)
         update_user_profile_from_api(userid, student_id)
 
     # บันทึก Beacon Event ผ่าน API
@@ -229,23 +252,52 @@ def line_webhook():
                 timestamp = event.get('timestamp')
                 reply_token = event['replyToken']
 
+                event_time = datetime.fromtimestamp(timestamp / 1000, timezone.utc)
+
                 if not hwid or not userid or timestamp is None:
                     return jsonify({"message": "Missing beacon data"}), 400
 
-                event_time = datetime.fromtimestamp(timestamp / 1000, timezone.utc)
-                print(f"Received timestamp: {timestamp}, Converted datetime: {event_time = }")
+                # print(f"Received timestamp: {timestamp}, Converted datetime: {event_time = }")
 
                 profile = get_line_user_profile(userid)
                 displayname = profile.get("displayName", "Unknown User") if profile else "Unknown User"
                 # save_beacon_event(hwid, userid, event_time, displayname)
                 # ============================================================
-                # existing_event = get_last_beacon_event(hwid, userid)
+                existing_event = get_last_beacon_event(hwid, userid)
+                # print(f"Existing event: {existing_event}")
 
-                # utc_plus_7 = timezone(timedelta(hours=7))
-                # if existing_event and (event_time - existing_event.timestamp.replace(tzinfo=utc_plus_7)) < timedelta(minutes=1):
-                #     return jsonify({"message": "Duplicate event, ignored"}), 200  # ใช้ return แทน continue
+                utc_plus_7 = timezone(timedelta(hours=7))
+                existing_event_timestamp = existing_event.get("timestamp") if existing_event else None
+
+                if existing_event and existing_event_timestamp:
+                    # Convert existing_event_timestamp to datetime if it's a string
+                    if isinstance(existing_event_timestamp, str):
+                        existing_event_timestamp = datetime.fromisoformat(existing_event_timestamp)
+                        # print(f"Existing event timestamp converted to datetime: {existing_event_timestamp}")
+                    
+                    # Add timezone information to the existing timestamp
+                    existing_event_timestamp = existing_event_timestamp.replace(tzinfo=utc_plus_7)
+                    event_time = event_time.replace(tzinfo=utc_plus_7)
+                    # print(f"Existing event timestamp with timezone: {existing_event_timestamp}")
+                    # print(f"event_time: {event_time}")
+                    # print(f"Time difference: {event_time - existing_event_timestamp}")
+
+                    # Compare event_time with the existing event timestamp
+                    if (event_time - existing_event_timestamp) < timedelta(minutes=1):
+                        print("Duplicate event, ignored")
+                        return jsonify({"message": "Duplicate event, ignored"}), 200  # ใช้ return แทน continue
+                else:
+                    print("No existing event found or missing timestamp")
+
+
+                # save_beacon_event(hwid, userid, event_time, displayname)
+                # reply_to_user(reply_token, 
+                #                     f"เช็คชื่อเข้าเรียนสำเร็จ! คุณ {displayname}\n"
+                #                     f"กรุณากรอกรหัสนักศึกษา 8 หลัก เพื่ออัปเดตข้อมูลของคุณ")
+
 
                 existing_user = get_user_profile_from_api(userid)
+                print(f"Existing user: {existing_user}")
                 existing_user_displayname = existing_user.get("displayname") if existing_user else None
 
 
