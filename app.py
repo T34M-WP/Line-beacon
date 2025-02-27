@@ -79,32 +79,19 @@ def post_beacon_event(hwid, userid, event_time, student_id):
             "timestamp": event_time.isoformat()
         }
     }
-    try:
-        response = requests.post(url, json=data, headers=headers)
-        response.raise_for_status()
-        print(f"Beacon event saved successfully for {userid}")
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"Error saving beacon event: {e}")
-        return None
+    response = requests.post(url, json=data, headers=headers)
+    return response.json()
     
 def post_beacon_log(hwid, userid, event_time):
     url = f"{BASE_URL}/beacon-log/addBeaconLog"
     headers = {"Authorization": f"Bearer {API_ACCESS_TOKEN}"}
-    event_time_str = event_time.strftime('%Y-%m-%dT%H:%M:%S')
     data = {
         "hwId": hwid,
         "userId": userid,
-        "timestamp": event_time_str
+        "timestamp": event_time.isoformat()
     }
-    try:
-        response = requests.post(url, json=data, headers=headers)
-        response.raise_for_status()
-        print(f"Beacon event saved successfully for {userid}")
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"Error saving beacon event: {e}")
-        return None
+    response = requests.post(url, json=data, headers=headers)
+    return response.json()
 
 def validate_student_id(user_message, year_suffix, user_id, reply_token):
     if re.fullmatch(r"\d{8}", user_message):  
