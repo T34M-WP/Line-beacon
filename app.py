@@ -91,10 +91,11 @@ def post_beacon_event(hwid, userid, event_time, student_id):
 def post_beacon_log(hwid, userid, event_time):
     url = f"{BASE_URL}/beacon-log/addBeaconLog"
     headers = {"Authorization": f"Bearer {API_ACCESS_TOKEN}"}
+    event_time_str = event_time.strftime('%Y-%m-%dT%H:%M:%S')
     data = {
         "hwId": hwid,
         "userId": userid,
-        "timestamp": event_time.isoformat()
+        "timestamp": event_time_str
     }
     try:
         response = requests.post(url, json=data, headers=headers)
