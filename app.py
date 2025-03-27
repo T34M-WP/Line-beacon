@@ -1,153 +1,112 @@
+import os
 import re
 import requests
 from datetime import datetime, timezone, timedelta
 from flask import Flask, request, jsonify
+from dataclasses import dataclass
+from dotenv import load_dotenv
+
+# อ่านค่าจาก Environment Variables
+load_dotenv()
+@dataclass
+class Config:
+    LINE_CHANNEL_ACCESS_TOKEN: str = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+    API_ACCESS_TOKEN: str = os.environ.get("API_ACCESS_TOKEN")
+    BASE_URL: str = os.environ.get("BASE_URL")
+    LINE_REPLY_URL: str = "https://api.line.me/v2/bot/message/reply"
+    LINE_PROFILE_URL: str = "https://api.line.me/v2/bot/profile/"
+
+# ตรวจสอบค่า Config หากไม่มีให้หยุดทำงาน
+if not all([Config.LINE_CHANNEL_ACCESS_TOKEN, Config.API_ACCESS_TOKEN, Config.BASE_URL]):
+    raise ValueError("Missing required environment variables")
 
 app = Flask(__name__)
-
 user_sessions = {}
 
-LINE_CHANNEL_ACCESS_TOKEN = "yUkSAFq8OrTXaPA7t7N37c4vZ1widgppiBfOSh9iMwNOHQxus+JZ0SFJkZLDARzy9DyrWj0GEmn6VdULQof2QzJDZgmjgOsa4+E9kKA5EzeAMCTYEjLHdXKnWBsxz5HVxwcn60GU4iMk3Xdk4BRFXAdB04t89/1O/w1cDnyilFU="
-LINE_REPLY_URL = "https://api.line.me/v2/bot/message/reply"
-LINE_PROFILE_URL = "https://api.line.me/v2/bot/profile/"
-BASE_URL = "http://192.168.70.6:3000/api" 
-API_ACCESS_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6ImJlYWNvbiIsInJvbGUiOiJ1c2VyIiwiaWF0IjoxNzQwNjUyMTkzLCJleHAiOjE3NzIyMDk3OTN9.eQJWpm0OlJq01XOT2nPxatlXCDeydapufgTXWboEUjQ"
+# ฟังก์ชันสำหรับเรียก API
+def send_request(method, url, headers=None, json=None):
+    try:
+        response = requests.request(method, url, headers=headers, json=json)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"API Error: {e}")
+        return None
 
+# ฟังก์ชันส่งข้อความกลับไปที่ LINE
 def reply_to_user(reply_token, message):
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
+        "Authorization": f"Bearer {Config.LINE_CHANNEL_ACCESS_TOKEN}"
     }
     payload = {"replyToken": reply_token, "messages": [{"type": "text", "text": message}]}
+    send_request("POST", Config.LINE_REPLY_URL, headers=headers, json=payload)
 
-    try:
-        response = requests.post(LINE_REPLY_URL, headers=headers, json=payload)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        print(f"Error sending message: {e}")
-
+# ดึงข้อมูลโปรไฟล์จาก LINE
 def get_line_user_profile(user_id):
-    headers = {"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"}
-    try:
-        response = requests.get(f"{LINE_PROFILE_URL}{user_id}", headers=headers)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching LINE profile: {e}")
-        return None    
+    headers = {"Authorization": f"Bearer {Config.LINE_CHANNEL_ACCESS_TOKEN}"}
+    return send_request("GET", f"{Config.LINE_PROFILE_URL}{user_id}", headers=headers)
 
+# ดึงข้อมูลผู้ใช้จาก API
 def get_user_profile_from_api(user_id):
-    url = f"{BASE_URL}/beacon-log/findUserProfileBuUserId/{user_id}"
-    headers = {"Authorization": f"Bearer {API_ACCESS_TOKEN}"}
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching user profile: {e}")
-        return None
+    url = f"{Config.BASE_URL}/beacon-log/findUserProfileBuUserId/{user_id}"
+    headers = {"Authorization": f"Bearer {Config.API_ACCESS_TOKEN}"}
+    return send_request("GET", url, headers=headers)
 
+def get_user_event_from_api(user_id, hwid):
+    url = f"{Config.BASE_URL}/beacon-log/findLastedTimeStampByUserIdAndHWid/{user_id}/{hwid}"
+    headers = {"Authorization": f"Bearer {Config.API_ACCESS_TOKEN}"}
+    return send_request("GET", url, headers=headers)
+
+# อัปเดตโปรไฟล์ผู้ใช้ใน API
 def update_user_profile_from_api(user_id, new_displayname):
-    url = f"{BASE_URL}/beacon-log/update-profile/{user_id}/{new_displayname}"
-    headers = {"Authorization": f"Bearer {API_ACCESS_TOKEN}"}
-    response = requests.patch(url, headers=headers)
-    return response
-    
-def get_last_beacon_event(hwid, userid):
-    url = f"{BASE_URL}/beacon-log/findLastedTimeStampByUserIdAndHWid/{userid}/{hwid}"
-    headers = {"Authorization": f"Bearer {API_ACCESS_TOKEN}"}
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        return data
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching beacon event: {e}")
-        return None
-    
-def post_beacon_event(hwid, userid, event_time, student_id):
-    url = f"{BASE_URL}/beacon-log/addBeaconEvent"
-    headers = {"Authorization": f"Bearer {API_ACCESS_TOKEN}"}
-    data = {
-        "user_profile": {
-            "userId": userid,
-            "displayname": student_id
-        },
-        "beacon_log": {
-            "hwId": hwid,
-            "userId": userid,
-            "timestamp": event_time.isoformat()
-        }
-    }
-    response = requests.post(url, json=data, headers=headers)
-    return response.json()
-    
-def post_beacon_log(hwid, userid, event_time):
-    url = f"{BASE_URL}/beacon-log/addBeaconLog"
-    headers = {"Authorization": f"Bearer {API_ACCESS_TOKEN}"}
+    url = f"{Config.BASE_URL}/beacon-log/update-profile/{user_id}/{new_displayname}"
+    headers = {"Authorization": f"Bearer {Config.API_ACCESS_TOKEN}"}
+    return send_request("PATCH", url, headers=headers)
+
+def post_beacon_log(hwid, userid):
+    url = f"{Config.BASE_URL}/beacon-log/addBeaconLog"
+    headers = {"Authorization": f"Bearer {Config.API_ACCESS_TOKEN}"}
     data = {
         "hwId": hwid,
         "userId": userid,
-        "timestamp": event_time.isoformat()
     }
-    response = requests.post(url, json=data, headers=headers)
-    return response.json()
+    return send_request("POST", url, headers=headers, json=data)
 
-def validate_student_id(user_message, year_suffix, user_id, reply_token):
-    if re.fullmatch(r"\d{8}", user_message):  
-        student_prefix = int(user_message[:2])
-
-        if student_prefix <= year_suffix:
-            user_profile = get_user_profile_from_api(user_id)
-            if user_profile:
-                displayname = user_profile.get("displayname")
-                if displayname != user_message:
-                    print(f"Updating displayname to student ID: {user_message}")
-                    updated_profile = update_user_profile_from_api(user_id, user_message)
-                    if updated_profile:
-                        reply_to_user(reply_token, f"อัปเดตชื่อเป็นรหัสนักศึกษา {user_message} สำเร็จ!")
-                    else:
-                        reply_to_user(reply_token, "ไม่สามารถอัปเดตชื่อได้ในขณะนี้")
-                else:
-                    reply_to_user(reply_token, "รหัสนักศึกษาของคุณตรงกับข้อมูลในระบบแล้ว ไม่มีการบันทึกใหม่!")
-            else:
-                reply_to_user(reply_token, "ไม่พบข้อมูลของคุณในระบบ กรุณาเชื่อมต่อ Beacon ก่อนแล้วลองใหม่อีกครั้ง")
-        else:
-            reply_to_user(reply_token, f"รหัสนักศึกษาของคุณไม่ถูกต้อง กรุณากรอกหมายเลขที่ขึ้นต้นด้วยตัวเลขไม่เกิน {year_suffix}")
-    else:
-        reply_to_user(reply_token, "กรุณากรอกรหัสนักศึกษาที่ถูกต้อง (ต้องเป็นตัวเลข 8 หลักเท่านั้น)")
-
-    return jsonify({"message": "displayname update attempt"}), 200
-
-def save_beacon_event(hwid, userid, event_time, student_id):
-    existing_user = get_user_profile_from_api(userid)    
+# บันทึก event beacon
+def save_beacon_event(hwid, userid, student_id):
+    existing_user = get_user_profile_from_api(userid) 
     if not existing_user:
-        print(f"User {userid} not found, creating new user...")
-        headers = {"Authorization": f"Bearer {API_ACCESS_TOKEN}"}
-        url = f"{BASE_URL}/beacon-log/addBeaconEvent"
+        url = f"{Config.BASE_URL}/beacon-log/addBeaconEvent"
+        headers = {"Authorization": f"Bearer {Config.API_ACCESS_TOKEN}"}
         data = {
-            "user_profile": {
-                "userId": userid,
-                "displayname": student_id
-            },
-            "beacon_log": {
-                "hwId": hwid,
-                "userId": userid,
-                "timestamp": event_time.isoformat()
-            }
+            "user_profile": {"userId": userid, "displayname": student_id},
+            "beacon_log": {"hwId": hwid, "userId": userid}
         }
-        try:
-            response = requests.post(url, json=data , headers=headers)
-            response.raise_for_status()
-            print(f"New user created for {userid}")
-        except requests.exceptions.RequestException as e:
-            print(f"Failed to create user: {e}")
-            return None
+        return send_request("POST", url, headers=headers, json=data)
+    
+    post_beacon_log(hwid, userid)
+    update_user_profile_from_api(userid, student_id)
+    
+
+# ตรวจสอบรหัสนักศึกษา
+def validate_student_id(user_message, year_suffix, user_id, reply_token):
+    if re.fullmatch(r"\d{8}", user_message) and int(user_message[:2]) <= year_suffix:
+        user_profile = get_user_profile_from_api(user_id)
+        if user_profile:
+            if user_profile.get("displayname") != user_message:
+                if update_user_profile_from_api(user_id, user_message):
+                    reply_to_user(reply_token, f"อัปเดตชื่อเป็นรหัสนักศึกษา {user_message} สำเร็จ!")
+                else:
+                    reply_to_user(reply_token, "ไม่สามารถอัปเดตชื่อได้ในขณะนี้")
+            else:
+                reply_to_user(reply_token, "รหัสนักศึกษาของคุณตรงกับข้อมูลในระบบแล้ว")
+        else:
+            reply_to_user(reply_token, "ไม่พบข้อมูลของคุณในระบบ กรุณาเชื่อมต่อ Beacon ก่อนแล้วลองใหม่อีกครั้ง")
     else:
-        print(f"User {userid} found, updating displayname...")
-        post_beacon_log(hwid, userid, event_time)
-        update_user_profile_from_api(userid, student_id)
-                    
+        reply_to_user(reply_token, f"รหัสนักศึกษาของคุณไม่ถูกต้อง กรุณากรอกหมายเลขที่ขึ้นต้นด้วยตัวเลขไม่เกิน {year_suffix}")
+
+# LINE Webhook
 @app.route('/line-webhook', methods=['POST'])
 def line_webhook():
     try:
@@ -160,11 +119,11 @@ def line_webhook():
 
         for event in data['events']:
             event_type = event.get('type')
+            user_id = event['source']['userId']
+            reply_token = event['replyToken']
 
             if event_type == 'message' and event['message']['type'] == 'text':
-                user_id = event['source']['userId']
                 user_message = event['message']['text'].strip()
-                reply_token = event['replyToken']
 
                 if user_message.lower() == "เปลี่ยนชื่อผู้ใช้":
                     user_sessions[user_id] = "waiting_for_student_id"
@@ -172,7 +131,7 @@ def line_webhook():
                     return jsonify({"message": "Waiting for new displayname"}), 200
 
                 if user_sessions.get(user_id) == "waiting_for_student_id":
-                    if user_message.isnumeric() and len(user_message) == 8 and int(user_message[:2]) <= 68:
+                    if user_message.isnumeric() and len(user_message) == 8 and int(user_message[:2]) <= year_suffix:
                         del user_sessions[user_id]
                         return validate_student_id(user_message, year_suffix, user_id, reply_token)
                     else:
@@ -186,36 +145,26 @@ def line_webhook():
 
             elif event_type == 'beacon':
                 hwid = event['beacon'].get('hwid')
-                userid = event['source'].get('userId')
                 timestamp = event.get('timestamp')
-                reply_token = event['replyToken']
-                event_time = datetime.fromtimestamp(timestamp / 1000, timezone.utc)
 
-                if not hwid or not userid or timestamp is None:
+                if not hwid or not user_id or timestamp is None:
                     return jsonify({"message": "Missing beacon data"}), 400
 
-                profile = get_line_user_profile(userid)
+                event_time = datetime.fromtimestamp(timestamp / 1000, timezone.utc)
+                existing_event = get_user_event_from_api(user_id, hwid)
+                user_time_str = existing_event.get("timestamp") if existing_event else None
+                user_time = datetime.fromisoformat(user_time_str.replace("Z", "+00:00")) if user_time_str else None
+            
+                if user_time is not None:
+                    time_diff = event_time - user_time
+                    if time_diff < timedelta(minutes=2):
+                        print(f"User {user_id} already checked in")
+                        return jsonify({"message": "User already checked in"}), 200
+                
+                profile = get_line_user_profile(user_id)
                 displayname = profile.get("displayName", "Unknown User") if profile else "Unknown User"
 
-                utc_plus_7 = timezone(timedelta(hours=7))
-                existing_event = get_last_beacon_event(hwid, userid)
-                existing_event_timestamp = existing_event.get("timestamp") if existing_event else None
-
-                if existing_event and existing_event_timestamp:
-                    if isinstance(existing_event_timestamp, str):
-                        existing_event_timestamp = datetime.fromisoformat(existing_event_timestamp)
-
-                    existing_event_timestamp = existing_event_timestamp.replace(tzinfo=utc_plus_7)
-                    event_time = event_time.replace(tzinfo=utc_plus_7)
-
-                    if (event_time - existing_event_timestamp) < timedelta(minutes=1):
-                        print("Duplicate event, ignored")
-                        return jsonify({"message": "Duplicate event, ignored"}), 200
-                else:
-                    print("No existing event found or missing timestamp")
-
-                existing_user = get_user_profile_from_api(userid)
-                print(f"Existing user: {existing_user}")
+                existing_user = get_user_profile_from_api(user_id)
                 existing_user_displayname = existing_user.get("displayname") if existing_user else None
 
                 pattern = r"(\d{8})"
@@ -224,36 +173,25 @@ def line_webhook():
                     student_id = match.group()
                     student_prefix = int(student_id[:2])
                     if student_prefix <= year_suffix:
-                        reply_to_user(reply_token, f"เช็คชื่อเข้าเรียนสำเร็จ! คุณ {student_id}")
-                        save_beacon_event(hwid, userid, event_time, student_id)
+                        message = f"เช็คชื่อเข้าเรียนสำเร็จ! คุณ {student_id}"
                     else:
-                        if existing_user and existing_user_displayname.isdigit() and len(existing_user_displayname) == 8:
-                            reply_to_user(reply_token, 
-                                    f"เช็คชื่อเข้าเรียนสำเร็จ! คุณ {existing_user_displayname}")
-                        else:
-                            reply_to_user(reply_token, 
-                                        f"เช็คชื่อเข้าเรียนสำเร็จ! คุณ {displayname}\n"
-                                        f"รหัสนักศึกษาของคุณไม่ถูกต้อง กรุณากรอกรหัสที่ขึ้นต้นด้วยตัวเลขไม่เกิน {year_suffix}")
-                        if existing_user :
-                            post_beacon_event(hwid, userid, event_time, existing_user_displayname)
-                        else:
-                            save_beacon_event(hwid, userid, event_time, student_id)
+                        message = (f"เช็คชื่อเข้าเรียนสำเร็จ! คุณ {displayname}\n"
+                                f"รหัสนักศึกษาของคุณไม่ถูกต้อง กรุณากรอกรหัสที่ขึ้นต้นด้วยตัวเลขไม่เกิน {year_suffix}")
+                elif existing_user_displayname and re.match(r"\d{8}", existing_user_displayname):
+                    student_id = existing_user_displayname
+                    message = f"เช็คชื่อเข้าเรียนสำเร็จ! คุณ {student_id}"
                 else:
-                    if existing_user and existing_user_displayname.isdigit() and len(existing_user_displayname) == 8:
-                        save_beacon_event(hwid, userid, event_time, existing_user_displayname)
-                        reply_to_user(reply_token, 
-                                    f"เช็คชื่อเข้าเรียนสำเร็จ! คุณ {existing_user_displayname}")
-                    else:
-                        save_beacon_event(hwid, userid, event_time, displayname)
-                        reply_to_user(reply_token, 
-                                    f"เช็คชื่อเข้าเรียนสำเร็จ! คุณ {displayname}\n"
-                                    f"กรุณากรอกรหัสนักศึกษา 8 หลัก เพื่ออัปเดตข้อมูลของคุณ")
+                    student_id = None
+                    message = (f"เช็คชื่อเข้าเรียนสำเร็จ! คุณ {displayname}\n"
+                            f"กรุณากรอกรหัสนักศึกษา 8 หลัก เพื่ออัปเดตข้อมูลของคุณ")
+
+                save_beacon_event(hwid, user_id, student_id or displayname)
+                reply_to_user(reply_token, message)
+
         return jsonify({"message": "Event processed"}), 200
-    
     except Exception as e:
         print(f"Error: {e}")
         return jsonify({"message": "An error occurred", "error": str(e)}), 500
 
 if __name__ == '__main__':
-    with app.app_context():
-        app.run(port=5000, debug=True)
+    app.run(port=5000, debug=True)
