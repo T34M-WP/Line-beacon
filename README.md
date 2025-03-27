@@ -46,9 +46,9 @@ Before running the application, you need to set up environment variables:
 You can set them in a `.env` file or export them manually:
 
 ```bash
-export LINE_CHANNEL_SECRET="your_channel_secret"
-export LINE_CHANNEL_ACCESS_TOKEN="your_access_token"
-export WEBHOOK_URL="your_webhook_url"
+export LINE_CHANNEL_ACCESS_TOKEN="your_channel_secret"
+export API_ACCESS_TOKEN="your_api_token"
+export BASE_URL="your_base_url"
 ```
 
 ## Usage
